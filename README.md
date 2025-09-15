@@ -133,13 +133,7 @@ multi-database-architecture-casestudy/
 ├── 📸 architecture/                    # Architecture diagrams
 ├── 🧪 testing/                         # Performance test results
 ├── 📊 monitoring/                      # CloudWatch dashboards
-├── 💰 cost-analysis/                   # Financial analysis
-└── 📚 appendices/                      # Supporting documentation
-    ├── appendix-a-rds-configuration.md
-    ├── appendix-b-caching-strategy.md
-    ├── appendix-c-performance-metrics.md
-    ├── appendix-d-troubleshooting.md
-    └── appendix-e-references.md
+└── 💰 cost-analysis/                   # Financial analysis
 ```
 
 ## 🚀 Quick Start
