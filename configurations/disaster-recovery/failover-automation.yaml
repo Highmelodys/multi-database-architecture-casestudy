@@ -1,0 +1,205 @@
+# Disaster Recovery and Failover Automation
+# XYZ Corporation Multi-Database Architecture
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automated disaster recovery and failover configurations'
+
+Resources:
+  # Lambda Function for Automated Failover
+  FailoverAutomationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: xyz-corp-disaster-recovery-automation
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt FailoverRole.Arn
+      Timeout: 900
+      
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import time
+          
+          def lambda_handler(event, context):
+              rds = boto3.client('rds')
+              dynamodb = boto3.client('dynamodb')
+              route53 = boto3.client('route53')
+              sns = boto3.client('sns')
+              
+              # Determine failure type and region
+              failure_type = event.get('failure_type', 'unknown')
+              source_region = event.get('source_region', 'us-east-1')
+              
+              response = {
+                  'statusCode': 200,
+                  'actions_taken': []
+              }
+              
+              try:
+                  if failure_type == 'rds_primary_failure':
+                      # Promote read replica to primary
+                      replica_id = 'xyz-corp-replica-west'
+                      
+                      rds_west = boto3.client('rds', region_name='us-west-2')
+                      promote_response = rds_west.promote_read_replica(
+                          DBInstanceIdentifier=replica_id
+                      )
+                      
+                      response['actions_taken'].append(f"Promoted {replica_id} to primary")
+                      
+                      # Update Route53 to point to new primary
+                      update_dns_record('xyz-corp-db.internal', 
+                                       promote_response['DBInstance']['Endpoint']['Address'])
+                      
+                  elif failure_type == 'region_failure':
+                      # Full region failover
+                      perform_region_failover(source_region)
+                      response['actions_taken'].append("Initiated full region failover")
+                  
+                  # Send notification
+                  sns.publish(
+                      TopicArn='arn:aws:sns:us-east-1:123456789012:xyz-corp-dr-alerts',
+                      Subject=f'Disaster Recovery Activated: {failure_type}',
+                      Message=json.dumps(response, indent=2)
+                  )
+                  
+              except Exception as e:
+                  response['error'] = str(e)
+                  response['statusCode'] = 500
+              
+              return response
+          
+          def update_dns_record(hostname, new_ip):
+              # DNS failover logic here
+              pass
+          
+          def perform_region_failover(failed_region):
+              # Region-wide failover logic here
+              pass
+
+      Tags:
+        - Key: Name
+          Value: Disaster Recovery Automation
+        - Key: Purpose
+          Value: automated-failover
+
+  # IAM Role for Failover Function
+  FailoverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: xyz-corp-disaster-recovery-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: FailoverPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds:*
+                  - dynamodb:*
+                  - route53:*
+                  - sns:Publish
+                  - cloudwatch:*
+                Resource: "*"
+
+  # EventBridge Rule for RDS Failures
+  RDSFailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: xyz-corp-rds-failure-detection
+      Description: Detect RDS failures and trigger automated recovery
+      EventPattern:
+        source: ["aws.rds"]
+        detail-type: ["RDS DB Instance Event"]
+        detail:
+          EventCategories: ["failure", "failover"]
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt FailoverAutomationFunction.Arn
+          Id: RDSFailoverTarget
+          InputTransformer:
+            InputPathsMap:
+              instance: "$.detail.SourceId"
+              event: "$.detail.EventCategories[0]"
+            InputTemplate: |
+              {
+                "failure_type": "rds_primary_failure",
+                "instance_id": "<instance>",
+                "event_type": "<event>"
+              }
+
+  # Permission for EventBridge to invoke Lambda
+  FailoverLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt FailoverAutomationFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RDSFailureRule.Arn
+
+  # Health Check for Primary Database
+  DatabaseHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: TCP
+        ResourcePath: "/"
+        FullyQualifiedDomainName: xyz-corp-primary-db.cluster-abc123.us-east-1.rds.amazonaws.com
+        Port: 3306
+        RequestInterval: 30
+        FailureThreshold: 3
+      HealthCheckTags:
+        - Key: Name
+          Value: Primary Database Health Check
+        - Key: Purpose
+          Value: disaster-recovery-monitoring
+
+  # SNS Topic for DR Notifications
+  DRNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: xyz-corp-dr-alerts
+      DisplayName: XYZ Corp Disaster Recovery Alerts
+
+  # CloudWatch Alarm for Database Health
+  DatabaseHealthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: xyz-corp-database-health-critical
+      AlarmDescription: Critical database health issues detected
+      MetricName: HealthCheckStatus
+      Namespace: AWS/Route53
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref DRNotificationTopic
+      Dimensions:
+        - Name: HealthCheckId
+          Value: !Ref DatabaseHealthCheck
+
+Outputs:
+  FailoverFunctionArn:
+    Description: ARN of the disaster recovery automation function
+    Value: !GetAtt FailoverAutomationFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-failover-function-arn"
+
+  DRNotificationTopicArn:
+    Description: ARN of the disaster recovery notification topic
+    Value: !Ref DRNotificationTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-dr-notification-topic-arn"

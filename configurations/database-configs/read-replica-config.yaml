@@ -1,0 +1,177 @@
+# RDS Read Replica Configuration
+# XYZ Corporation Multi-Database Architecture - Cross Region Replicas
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS MySQL Read Replicas for US-West-2 and US-Central'
+
+Parameters:
+  SourceDBInstanceIdentifier:
+    Type: String
+    Default: "arn:aws:rds:us-east-1:123456789012:db:xyz-corp-primary-db"
+    Description: ARN of the source database instance
+
+  ReplicaInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+    Description: Instance class for read replicas
+
+Resources:
+  # US-West-2 Read Replica
+  ReadReplicaWest:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: xyz-corp-replica-west
+      SourceDBInstanceIdentifier: !Ref SourceDBInstanceIdentifier
+      DBInstanceClass: !Ref ReplicaInstanceClass
+      
+      # Storage Configuration
+      StorageEncrypted: true
+      KmsKeyId: alias/aws/rds
+      
+      # Network Configuration
+      DBSubnetGroupName: !Ref ReplicaSubnetGroupWest
+      VPCSecurityGroups:
+        - !Ref ReplicaSecurityGroupWest
+      PubliclyAccessible: false
+      
+      # Performance and Monitoring
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt ReplicaMonitoringRole.Arn
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      
+      # Backup Configuration (Read replicas don't support automated backups)
+      BackupRetentionPeriod: 0
+      
+      # Multi-AZ for read replicas (optional for high availability)
+      MultiAZ: false
+      
+      # Maintenance Window
+      PreferredMaintenanceWindow: "sun:05:00-sun:06:00"
+      
+      Tags:
+        - Key: Name
+          Value: XYZ Corp Read Replica West
+        - Key: Environment
+          Value: production
+        - Key: Region
+          Value: us-west-2
+        - Key: Purpose
+          Value: read-scaling
+        - Key: ReplicaType
+          Value: cross-region
+
+  # US-Central (Ohio) Read Replica
+  ReadReplicaCentral:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: xyz-corp-replica-central
+      SourceDBInstanceIdentifier: !Ref SourceDBInstanceIdentifier
+      DBInstanceClass: !Ref ReplicaInstanceClass
+      
+      # Storage Configuration
+      StorageEncrypted: true
+      KmsKeyId: alias/aws/rds
+      
+      # Network Configuration
+      DBSubnetGroupName: !Ref ReplicaSubnetGroupCentral
+      VPCSecurityGroups:
+        - !Ref ReplicaSecurityGroupCentral
+      PubliclyAccessible: false
+      
+      # Performance and Monitoring
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt ReplicaMonitoringRole.Arn
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      
+      # Backup Configuration
+      BackupRetentionPeriod: 0
+      
+      # Multi-AZ Configuration
+      MultiAZ: false
+      
+      # Maintenance Window
+      PreferredMaintenanceWindow: "sun:06:00-sun:07:00"
+      
+      Tags:
+        - Key: Name
+          Value: XYZ Corp Read Replica Central
+        - Key: Environment
+          Value: production
+        - Key: Region
+          Value: us-east-2
+        - Key: Purpose
+          Value: read-scaling
+        - Key: ReplicaType
+          Value: cross-region
+
+  # Subnet Groups for Replicas
+  ReplicaSubnetGroupWest:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for West region replica
+      SubnetIds:
+        - subnet-west-12345  # Replace with actual West region subnet IDs
+        - subnet-west-67890
+      Tags:
+        - Key: Name
+          Value: xyz-corp-replica-subnet-west
+        - Key: Region
+          Value: us-west-2
+
+  ReplicaSubnetGroupCentral:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Central region replica
+      SubnetIds:
+        - subnet-central-12345  # Replace with actual Central region subnet IDs
+        - subnet-central-67890
+      Tags:
+        - Key: Name
+          Value: xyz-corp-replica-subnet-central
+        - Key: Region
+          Value: us-east-2
+
+  # IAM Role for Enhanced Monitoring
+  ReplicaMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        - Key: Name
+          Value: rds-replica-monitoring-role
+
+Outputs:
+  ReadReplicaWestEndpoint:
+    Description: West region read replica endpoint
+    Value: !GetAtt ReadReplicaWest.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-replica-west-endpoint"
+
+  ReadReplicaCentralEndpoint:
+    Description: Central region read replica endpoint
+    Value: !GetAtt ReadReplicaCentral.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-replica-central-endpoint"
+
+  ReadReplicaWestArn:
+    Description: West region read replica ARN
+    Value: !Sub "arn:aws:rds:us-west-2:${AWS::AccountId}:db:${ReadReplicaWest}"
+
+  ReadReplicaCentralArn:
+    Description: Central region read replica ARN
+    Value: !Sub "arn:aws:rds:us-east-2:${AWS::AccountId}:db:${ReadReplicaCentral}"

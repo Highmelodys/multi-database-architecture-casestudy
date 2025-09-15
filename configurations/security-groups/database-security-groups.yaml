@@ -1,0 +1,382 @@
+# Database Security Groups Configuration
+# XYZ Corporation Multi-Database Architecture - Network Security
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Security Groups for RDS, DynamoDB, and ElastiCache access control'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for security group creation
+
+  ApplicationSubnetCIDR:
+    Type: String
+    Default: "10.0.1.0/24"
+    Description: CIDR block for application servers subnet
+
+  DatabaseSubnetCIDR1:
+    Type: String
+    Default: "10.0.2.0/24"
+    Description: CIDR block for first database subnet
+
+  DatabaseSubnetCIDR2:
+    Type: String
+    Default: "10.0.3.0/24"
+    Description: CIDR block for second database subnet
+
+  ManagementCIDR:
+    Type: String
+    Default: "10.0.0.0/24"
+    Description: CIDR block for management/bastion servers
+
+Resources:
+  # Security Group for RDS Database Access
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: xyz-corp-rds-sg
+      GroupDescription: Security group for XYZ Corp RDS MySQL database
+      VpcId: !Ref VpcId
+      
+      # Inbound Rules
+      SecurityGroupIngress:
+        # MySQL access from application servers
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref ApplicationSubnetCIDR
+          Description: MySQL access from application subnet
+        
+        # MySQL access from ElastiCache subnet (for cache warming)
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          Description: MySQL access from cache servers
+        
+        # Management access from bastion/admin servers
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref ManagementCIDR
+          Description: MySQL management access
+      
+      # Outbound Rules (explicit for security)
+      SecurityGroupEgress:
+        # Allow HTTPS for AWS API calls
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS for AWS services
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-RDS-SecurityGroup
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: RDS-MySQL
+        - Key: Purpose
+          Value: database-access-control
+
+  # Security Group for ElastiCache Redis
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: xyz-corp-elasticache-sg
+      GroupDescription: Security group for XYZ Corp ElastiCache Redis cluster
+      VpcId: !Ref VpcId
+      
+      # Inbound Rules
+      SecurityGroupIngress:
+        # Redis access from application servers
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref ApplicationSubnetCIDR
+          Description: Redis access from application subnet
+        
+        # Redis cluster communication
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          Description: Redis cluster node communication
+        
+        # Management access
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref ManagementCIDR
+          Description: Redis management access
+      
+      # Outbound Rules
+      SecurityGroupEgress:
+        # Allow Redis cluster communication
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          Description: Redis cluster outbound
+        
+        # HTTPS for AWS services
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS for AWS services
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-ElastiCache-SecurityGroup
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: ElastiCache-Redis
+        - Key: Purpose
+          Value: cache-access-control
+
+  # Security Group for Application Servers
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: xyz-corp-application-sg
+      GroupDescription: Security group for XYZ Corp application servers
+      VpcId: !Ref VpcId
+      
+      # Inbound Rules
+      SecurityGroupIngress:
+        # HTTP from Load Balancer
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          Description: HTTP from load balancer
+        
+        # HTTPS from Load Balancer
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          Description: HTTPS from load balancer
+        
+        # SSH from management subnet
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref ManagementCIDR
+          Description: SSH management access
+        
+        # Application port (e.g., 8080)
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          Description: Application port from load balancer
+      
+      # Outbound Rules
+      SecurityGroupEgress:
+        # MySQL to RDS
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: MySQL to RDS
+        
+        # Redis to ElastiCache
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          Description: Redis to ElastiCache
+        
+        # HTTPS for AWS services and external APIs
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS outbound
+        
+        # HTTP for package updates
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP outbound
+        
+        # DNS
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+          Description: DNS queries
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-Application-SecurityGroup
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: Application-Servers
+        - Key: Purpose
+          Value: application-access-control
+
+  # Security Group for Load Balancer
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: xyz-corp-alb-sg
+      GroupDescription: Security group for XYZ Corp Application Load Balancer
+      VpcId: !Ref VpcId
+      
+      # Inbound Rules
+      SecurityGroupIngress:
+        # HTTP from internet
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from internet
+        
+        # HTTPS from internet
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS from internet
+      
+      # Outbound Rules
+      SecurityGroupEgress:
+        # HTTP to application servers
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: HTTP to application servers
+        
+        # HTTPS to application servers
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: HTTPS to application servers
+        
+        # Application port to servers
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: Application port to servers
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-LoadBalancer-SecurityGroup
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: Application-LoadBalancer
+        - Key: Purpose
+          Value: load-balancer-access
+
+  # Security Group for Management/Bastion Hosts
+  ManagementSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: xyz-corp-management-sg
+      GroupDescription: Security group for XYZ Corp management and bastion servers
+      VpcId: !Ref VpcId
+      
+      # Inbound Rules
+      SecurityGroupIngress:
+        # SSH from specific IP ranges (replace with your office/VPN IPs)
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "203.0.113.0/24"  # Replace with actual management IPs
+          Description: SSH from management network
+        
+        # RDP for Windows instances
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: "203.0.113.0/24"  # Replace with actual management IPs
+          Description: RDP from management network
+      
+      # Outbound Rules
+      SecurityGroupEgress:
+        # SSH to application servers
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref ApplicationSecurityGroup
+          Description: SSH to application servers
+        
+        # MySQL to RDS for management
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: MySQL management access
+        
+        # Redis to ElastiCache for management
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          Description: Redis management access
+        
+        # HTTPS for AWS console and APIs
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS for AWS services
+        
+        # HTTP for updates
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP for updates
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-Management-SecurityGroup
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: Management-Bastion
+        - Key: Purpose
+          Value: administrative-access
+
+Outputs:
+  RDSSecurityGroupId:
+    Description: ID of the RDS security group
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-rds-sg-id"
+
+  ElastiCacheSecurityGroupId:
+    Description: ID of the ElastiCache security group
+    Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-elasticache-sg-id"
+
+  ApplicationSecurityGroupId:
+    Description: ID of the application security group
+    Value: !Ref ApplicationSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-application-sg-id"
+
+  LoadBalancerSecurityGroupId:
+    Description: ID of the load balancer security group
+    Value: !Ref LoadBalancerSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-alb-sg-id"
+
+  ManagementSecurityGroupId:
+    Description: ID of the management security group
+    Value: !Ref ManagementSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-management-sg-id"

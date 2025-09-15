@@ -1,0 +1,171 @@
+# Database Performance Tuning Configuration
+# XYZ Corporation Multi-Database Architecture
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Performance optimization settings for RDS MySQL, DynamoDB, and ElastiCache'
+
+Parameters:
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: RDS instance class for performance optimization
+
+Resources:
+  # MySQL Parameter Group for Performance Optimization
+  MySQLPerformanceParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mysql8.0
+      Description: Optimized MySQL 8.0 parameters for XYZ Corp workload
+      Parameters:
+        # Buffer Pool Optimization
+        innodb_buffer_pool_size: '{DBInstanceClassMemory*3/4}'
+        innodb_buffer_pool_instances: '8'
+        innodb_buffer_pool_chunk_size: '134217728'  # 128MB
+        
+        # Logging and Recovery
+        innodb_log_file_size: '268435456'  # 256MB
+        innodb_log_buffer_size: '67108864'  # 64MB
+        innodb_flush_log_at_trx_commit: '1'
+        innodb_flush_method: 'O_DIRECT'
+        
+        # Connection Management
+        max_connections: '1000'
+        max_user_connections: '950'
+        thread_cache_size: '50'
+        
+        # Query Optimization
+        query_cache_type: '0'  # Disabled in MySQL 8.0
+        tmp_table_size: '134217728'  # 128MB
+        max_heap_table_size: '134217728'  # 128MB
+        
+        # Slow Query Logging
+        slow_query_log: '1'
+        long_query_time: '2'
+        log_queries_not_using_indexes: '0'
+        
+        # Binary Logging
+        binlog_format: 'ROW'
+        sync_binlog: '1'
+        expire_logs_days: '3'
+        
+        # InnoDB Performance
+        innodb_io_capacity: '200'
+        innodb_io_capacity_max: '2000'
+        innodb_read_io_threads: '4'
+        innodb_write_io_threads: '4'
+        innodb_purge_threads: '1'
+        
+        # Table and Index Optimization
+        innodb_stats_on_metadata: '0'
+        innodb_stats_persistent: '1'
+        innodb_stats_auto_recalc: '1'
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-MySQL-Performance-Params
+        - Key: Environment
+          Value: production
+        - Key: Purpose
+          Value: performance-optimization
+
+  # ElastiCache Parameter Group for Redis Optimization
+  RedisPerformanceParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: redis7.x
+      Description: Optimized Redis parameters for XYZ Corp caching workload
+      Properties:
+        # Memory Management
+        maxmemory-policy: 'allkeys-lru'
+        
+        # Performance Settings
+        timeout: '300'
+        tcp-keepalive: '60'
+        
+        # Persistence (disabled for performance)
+        save: ''  # Disable RDB snapshots for better performance
+        
+        # Networking
+        tcp-backlog: '511'
+        
+        # Memory Optimization
+        hash-max-ziplist-entries: '512'
+        hash-max-ziplist-value: '64'
+        list-max-ziplist-size: '-2'
+        set-max-intset-entries: '512'
+        zset-max-ziplist-entries: '128'
+        zset-max-ziplist-value: '64'
+      
+      Tags:
+        - Key: Name
+          Value: XYZ-Corp-Redis-Performance-Params
+        - Key: Environment
+          Value: production
+        - Key: Purpose
+          Value: cache-optimization
+
+  # DynamoDB Auto Scaling Configuration
+  DynamoDBAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/DynamoDBAutoscaleRole
+
+  # Read Capacity Auto Scaling
+  DynamoDBReadAutoScaling:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: table/xyz-corp-realtime-analytics
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+  # Write Capacity Auto Scaling
+  DynamoDBWriteAutoScaling:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: table/xyz-corp-realtime-analytics
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+  # Read Scaling Policy
+  DynamoDBReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ServiceNamespace: dynamodb
+      ResourceId: table/xyz-corp-realtime-analytics
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+Outputs:
+  MySQLParameterGroupName:
+    Description: Name of the optimized MySQL parameter group
+    Value: !Ref MySQLPerformanceParameterGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-mysql-params"
+      
+  RedisParameterGroupName:
+    Description: Name of the optimized Redis parameter group
+    Value: !Ref RedisPerformanceParameterGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-redis-params"

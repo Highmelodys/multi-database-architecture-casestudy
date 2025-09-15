@@ -1,0 +1,186 @@
+# RDS Primary Database Configuration
+# XYZ Corporation Multi-Database Architecture
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS MySQL 8.0 Multi-AZ Primary Database Configuration'
+
+Parameters:
+  DatabaseInstanceIdentifier:
+    Type: String
+    Default: xyz-corp-primary-db
+    Description: Unique identifier for the RDS instance
+
+  DatabaseEngine:
+    Type: String
+    Default: mysql
+    AllowedValues: [mysql]
+    Description: Database engine type
+
+  DatabaseEngineVersion:
+    Type: String
+    Default: "8.0.35"
+    Description: MySQL engine version
+
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+    Description: Database instance class
+
+  DatabaseAllocatedStorage:
+    Type: Number
+    Default: 100
+    MinValue: 20
+    MaxValue: 1000
+    Description: Allocated storage in GB
+
+  DatabaseStorageType:
+    Type: String
+    Default: gp2
+    AllowedValues: [gp2, io1, standard]
+    Description: Storage type for the database
+
+  MultiAZ:
+    Type: String
+    Default: true
+    AllowedValues: [true, false]
+    Description: Enable Multi-AZ deployment
+
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 35
+    Description: Backup retention period in days
+
+  PreferredBackupWindow:
+    Type: String
+    Default: "03:00-04:00"
+    Description: Preferred backup window (UTC)
+
+  PreferredMaintenanceWindow:
+    Type: String
+    Default: "sun:04:00-sun:05:00"
+    Description: Preferred maintenance window
+
+Resources:
+  # Database Subnet Group
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for XYZ Corp primary database
+      SubnetIds:
+        - subnet-12345678  # Replace with actual subnet IDs
+        - subnet-87654321
+      Tags:
+        - Key: Name
+          Value: xyz-corp-db-subnet-group
+        - Key: Environment
+          Value: production
+        - Key: Project
+          Value: multi-database-architecture
+
+  # Database Parameter Group
+  DatabaseParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mysql8.0
+      Description: Custom parameter group for XYZ Corp MySQL database
+      Parameters:
+        innodb_buffer_pool_size: '{DBInstanceClassMemory*3/4}'
+        max_connections: '1000'
+        innodb_log_file_size: '268435456'  # 256MB
+        slow_query_log: '1'
+        long_query_time: '2'
+        general_log: '0'
+        binlog_format: 'ROW'
+        sync_binlog: '1'
+        innodb_flush_log_at_trx_commit: '1'
+      Tags:
+        - Key: Name
+          Value: xyz-corp-mysql-params
+        - Key: Environment
+          Value: production
+
+  # Primary RDS Instance
+  PrimaryDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DatabaseInstanceIdentifier
+      Engine: !Ref DatabaseEngine
+      EngineVersion: !Ref DatabaseEngineVersion
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      AllocatedStorage: !Ref DatabaseAllocatedStorage
+      StorageType: !Ref DatabaseStorageType
+      StorageEncrypted: true
+      KmsKeyId: alias/aws/rds
+      
+      # Multi-AZ Configuration
+      MultiAZ: !Ref MultiAZ
+      
+      # Database Configuration
+      DatabaseName: xyzcorp_main
+      MasterUsername: admin
+      MasterUserPassword: !Ref DatabasePassword  # Use AWS Secrets Manager in production
+      
+      # Network Configuration
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      
+      # Backup Configuration
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: !Ref PreferredBackupWindow
+      PreferredMaintenanceWindow: !Ref PreferredMaintenanceWindow
+      DeleteAutomatedBackups: false
+      DeletionProtection: true
+      
+      # Parameter Group
+      DBParameterGroupName: !Ref DatabaseParameterGroup
+      
+      # Monitoring
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt EnhancedMonitoringRole.Arn
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      
+      # Logging
+      EnableCloudwatchLogsExports:
+        - error
+        - general
+        - slow-query
+      
+      Tags:
+        - Key: Name
+          Value: XYZ Corp Primary Database
+        - Key: Environment
+          Value: production
+        - Key: Backup
+          Value: required
+        - Key: Region
+          Value: us-east-1
+        - Key: Purpose
+          Value: primary-transactional
+
+Outputs:
+  DatabaseEndpoint:
+    Description: Primary database endpoint
+    Value: !GetAtt PrimaryDatabase.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-database-endpoint"
+
+  DatabasePort:
+    Description: Primary database port
+    Value: !GetAtt PrimaryDatabase.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-database-port"
+
+  DatabaseArn:
+    Description: Primary database ARN
+    Value: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${PrimaryDatabase}"
+    Export:
+      Name: !Sub "${AWS::StackName}-database-arn"

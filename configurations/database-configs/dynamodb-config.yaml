@@ -1,0 +1,278 @@
+# DynamoDB Configuration
+# XYZ Corporation Multi-Database Architecture - Real-time Analytics
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB table for real-time device data and analytics'
+
+Parameters:
+  TableName:
+    Type: String
+    Default: xyz-corp-realtime-analytics
+    Description: DynamoDB table name for real-time data
+
+  BillingMode:
+    Type: String
+    Default: ON_DEMAND
+    AllowedValues: [PAY_PER_REQUEST, PROVISIONED]
+    Description: Billing mode for DynamoDB table
+
+Resources:
+  # Main DynamoDB Table for Real-time Analytics
+  RealtimeAnalyticsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: !Ref BillingMode
+      
+      # Schema Definition
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: branch_id
+          AttributeType: S
+        - AttributeName: event_type
+          AttributeType: S
+        - AttributeName: gsi1_pk
+          AttributeType: S
+        - AttributeName: gsi1_sk
+          AttributeType: S
+        - AttributeName: gsi2_pk
+          AttributeType: S
+        - AttributeName: gsi2_sk
+          AttributeType: N
+      
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      
+      # Global Secondary Indexes
+      GlobalSecondaryIndexes:
+        # GSI1: Query by branch and event type
+        - IndexName: BranchEventIndex
+          KeySchema:
+            - AttributeName: gsi1_pk  # branch_id#event_type
+              KeyType: HASH
+            - AttributeName: gsi1_sk  # timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          BillingMode: !Ref BillingMode
+        
+        # GSI2: Query by event type and time range
+        - IndexName: EventTimeIndex
+          KeySchema:
+            - AttributeName: gsi2_pk  # event_type
+              KeyType: HASH
+            - AttributeName: gsi2_sk  # timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - device_id
+              - branch_id
+              - data_value
+              - location
+          BillingMode: !Ref BillingMode
+      
+      # DynamoDB Streams for real-time processing
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      
+      # Point-in-time Recovery
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      
+      # Encryption
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: alias/aws/dynamodb
+      
+      # Time to Live
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      
+      # Tags
+      Tags:
+        - Key: Name
+          Value: XYZ Corp Real-time Analytics
+        - Key: Environment
+          Value: production
+        - Key: Purpose
+          Value: real-time-analytics
+        - Key: DataRetention
+          Value: 30-days
+        - Key: Application
+          Value: device-monitoring
+
+  # Device Data Summary Table (Aggregated Data)
+  DeviceSummaryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: xyz-corp-device-summary
+      BillingMode: ON_DEMAND
+      
+      AttributeDefinitions:
+        - AttributeName: summary_id
+          AttributeType: S  # Format: branch_id#device_type#date
+        - AttributeName: summary_type
+          AttributeType: S
+        - AttributeName: date_hour
+          AttributeType: S
+      
+      KeySchema:
+        - AttributeName: summary_id
+          KeyType: HASH
+        - AttributeName: date_hour
+          KeyType: RANGE
+      
+      # Global Secondary Index for summary queries
+      GlobalSecondaryIndexes:
+        - IndexName: SummaryTypeIndex
+          KeySchema:
+            - AttributeName: summary_type
+              KeyType: HASH
+            - AttributeName: date_hour
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          BillingMode: ON_DEMAND
+      
+      # Enable streams for downstream processing
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      
+      # Point-in-time Recovery
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      
+      # Encryption
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: alias/aws/dynamodb
+      
+      # TTL for automatic cleanup (keep summaries for 90 days)
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      
+      Tags:
+        - Key: Name
+          Value: XYZ Corp Device Summary
+        - Key: Environment
+          Value: production
+        - Key: Purpose
+          Value: aggregated-analytics
+        - Key: DataRetention
+          Value: 90-days
+
+  # Lambda function for DynamoDB Stream processing
+  StreamProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+      Policies:
+        - PolicyName: DynamoDBStreamPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt DeviceSummaryTable.Arn
+                  - !Sub "${DeviceSummaryTable.Arn}/index/*"
+
+  # CloudWatch Log Group for DynamoDB operations
+  DynamoDBLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/dynamodb/xyz-corp-analytics
+      RetentionInDays: 30
+
+  # CloudWatch Dashboard for DynamoDB monitoring
+  DynamoDBDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: XYZ-Corp-DynamoDB-Analytics
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${RealtimeAnalyticsTable}" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "us-east-1",
+                "title": "DynamoDB Capacity Consumption"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "SuccessfulRequestLatency", "TableName", "${RealtimeAnalyticsTable}", "Operation", "Query" ],
+                  [ "...", "GetItem" ],
+                  [ "...", "PutItem" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "us-east-1",
+                "title": "Request Latency"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  RealtimeAnalyticsTableName:
+    Description: Name of the real-time analytics DynamoDB table
+    Value: !Ref RealtimeAnalyticsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-analytics-table-name"
+
+  RealtimeAnalyticsTableArn:
+    Description: ARN of the real-time analytics DynamoDB table
+    Value: !GetAtt RealtimeAnalyticsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-analytics-table-arn"
+
+  StreamArn:
+    Description: DynamoDB stream ARN for real-time processing
+    Value: !GetAtt RealtimeAnalyticsTable.StreamArn
+    Export:
+      Name: !Sub "${AWS::StackName}-stream-arn"
+
+  DeviceSummaryTableName:
+    Description: Name of the device summary DynamoDB table
+    Value: !Ref DeviceSummaryTable
+    Export:
+      Name: !Sub "${AWS::StackName}-summary-table-name"

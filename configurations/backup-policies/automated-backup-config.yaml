@@ -1,0 +1,482 @@
+# Automated Backup Configuration
+# XYZ Corporation Multi-Database Architecture - Backup & Recovery Policies
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automated backup policies for RDS, DynamoDB, and ElastiCache with cross-region replication'
+
+Parameters:
+  BackupRetentionDays:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 35
+    Description: Number of days to retain automated backups
+
+  CrossRegionBackup:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Enable cross-region backup replication
+
+  BackupWindow:
+    Type: String
+    Default: "03:00-04:00"
+    Description: Preferred backup window (UTC)
+
+  SnapshotFrequency:
+    Type: String
+    Default: "daily"
+    AllowedValues: ["daily", "weekly"]
+    Description: Frequency for manual snapshots
+
+Resources:
+  # RDS Automated Backup Configuration
+  RDSBackupConfiguration:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      # Backup Configuration
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      PreferredBackupWindow: !Ref BackupWindow
+      DeleteAutomatedBackups: false
+      DeletionProtection: true
+      
+      # Enable automated snapshots
+      EnableCloudwatchLogsExports:
+        - error
+        - general
+        - slow-query
+      
+      # Copy tags to snapshots
+      CopyTagsToSnapshot: true
+      
+      Tags:
+        - Key: BackupPolicy
+          Value: automated-daily
+        - Key: RetentionPeriod
+          Value: !Sub "${BackupRetentionDays}-days"
+        - Key: Environment
+          Value: production
+        - Key: Service
+          Value: RDS-MySQL
+
+  # Lambda function for automated RDS snapshots
+  RDSSnapshotFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: xyz-corp-rds-snapshot-automation
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt RDSSnapshotRole.Arn
+      Timeout: 300
+      
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import json
+          
+          def lambda_handler(event, context):
+              rds = boto3.client('rds')
+              
+              # Get current timestamp
+              timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+              
+              # RDS instances to backup
+              db_instances = ['xyz-corp-primary-db']
+              
+              for db_instance in db_instances:
+                  try:
+                      snapshot_id = f"{db_instance}-manual-{timestamp}"
+                      
+                      response = rds.create_db_snapshot(
+                          DBSnapshotIdentifier=snapshot_id,
+                          DBInstanceIdentifier=db_instance,
+                          Tags=[
+                              {
+                                  'Key': 'CreatedBy',
+                                  'Value': 'AutomatedBackup'
+                              },
+                              {
+                                  'Key': 'BackupType',
+                                  'Value': 'Manual'
+                              },
+                              {
+                                  'Key': 'Timestamp',
+                                  'Value': timestamp
+                              }
+                          ]
+                      )
+                      
+                      print(f"Created snapshot {snapshot_id} for {db_instance}")
+                      
+                  except Exception as e:
+                      print(f"Error creating snapshot for {db_instance}: {str(e)}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Backup automation completed')
+              }
+      
+      Tags:
+        - Key: Name
+          Value: RDS Snapshot Automation
+        - Key: Service
+          Value: Backup-Automation
+        - Key: Purpose
+          Value: automated-snapshots
+
+  # IAM Role for RDS Snapshot Lambda
+  RDSSnapshotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-RDS-Snapshot-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RDSSnapshotPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds:CreateDBSnapshot
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBSnapshots
+                  - rds:ListTagsForResource
+                  - rds:AddTagsToResource
+                  - rds:DeleteDBSnapshot
+                Resource: "*"
+
+  # EventBridge Rule for Daily Snapshots
+  DailySnapshotRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: xyz-corp-daily-snapshot-rule
+      Description: Trigger daily RDS snapshots
+      ScheduleExpression: "cron(0 4 * * ? *)"  # 4:00 AM UTC daily
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RDSSnapshotFunction.Arn
+          Id: RDSSnapshotTarget
+
+  # Permission for EventBridge to invoke Lambda
+  SnapshotLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt RDSSnapshotFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailySnapshotRule.Arn
+
+  # DynamoDB Point-in-Time Recovery
+  DynamoDBBackupPolicy:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: xyz-corp-realtime-analytics
+      
+      # Point-in-time Recovery
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      
+      # Backup policies are handled at table level
+      Tags:
+        - Key: BackupPolicy
+          Value: point-in-time-recovery
+        - Key: BackupRetention
+          Value: 35-days
+        - Key: Service
+          Value: DynamoDB
+
+  # Lambda function for DynamoDB backup automation
+  DynamoDBBackupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: xyz-corp-dynamodb-backup-automation
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt DynamoDBBackupRole.Arn
+      Timeout: 300
+      
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import json
+          
+          def lambda_handler(event, context):
+              dynamodb = boto3.client('dynamodb')
+              
+              # Get current timestamp
+              timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+              
+              # DynamoDB tables to backup
+              tables = [
+                  'xyz-corp-realtime-analytics',
+                  'xyz-corp-device-summary'
+              ]
+              
+              for table_name in tables:
+                  try:
+                      backup_name = f"{table_name}-backup-{timestamp}"
+                      
+                      response = dynamodb.create_backup(
+                          TableName=table_name,
+                          BackupName=backup_name
+                      )
+                      
+                      print(f"Created backup {backup_name} for table {table_name}")
+                      
+                  except Exception as e:
+                      print(f"Error creating backup for {table_name}: {str(e)}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('DynamoDB backup automation completed')
+              }
+      
+      Tags:
+        - Key: Name
+          Value: DynamoDB Backup Automation
+        - Key: Service
+          Value: Backup-Automation
+        - Key: Purpose
+          Value: dynamodb-snapshots
+
+  # IAM Role for DynamoDB Backup Lambda
+  DynamoDBBackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-DynamoDB-Backup-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBBackupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateBackup
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListBackups
+                  - dynamodb:DescribeBackup
+                  - dynamodb:DeleteBackup
+                Resource: "*"
+
+  # EventBridge Rule for Weekly DynamoDB Backups
+  WeeklyDynamoDBBackupRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: xyz-corp-weekly-dynamodb-backup-rule
+      Description: Trigger weekly DynamoDB backups
+      ScheduleExpression: "cron(0 5 ? * SUN *)"  # 5:00 AM UTC every Sunday
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DynamoDBBackupFunction.Arn
+          Id: DynamoDBBackupTarget
+
+  # Permission for EventBridge to invoke DynamoDB backup Lambda
+  DynamoDBBackupLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DynamoDBBackupFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyDynamoDBBackupRule.Arn
+
+  # ElastiCache Backup Configuration (Redis Snapshots)
+  ElastiCacheBackupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: xyz-corp-elasticache-backup-automation
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt ElastiCacheBackupRole.Arn
+      Timeout: 300
+      
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import json
+          
+          def lambda_handler(event, context):
+              elasticache = boto3.client('elasticache')
+              
+              # Get current timestamp
+              timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+              
+              # ElastiCache replication groups to backup
+              replication_groups = ['xyz-corp-redis-cluster']
+              
+              for group_id in replication_groups:
+                  try:
+                      snapshot_name = f"{group_id}-snapshot-{timestamp}"
+                      
+                      response = elasticache.create_snapshot(
+                          ReplicationGroupId=group_id,
+                          SnapshotName=snapshot_name,
+                          Tags=[
+                              {
+                                  'Key': 'CreatedBy',
+                                  'Value': 'AutomatedBackup'
+                              },
+                              {
+                                  'Key': 'BackupType',
+                                  'Value': 'Manual'
+                              },
+                              {
+                                  'Key': 'Timestamp',
+                                  'Value': timestamp
+                              }
+                          ]
+                      )
+                      
+                      print(f"Created snapshot {snapshot_name} for {group_id}")
+                      
+                  except Exception as e:
+                      print(f"Error creating snapshot for {group_id}: {str(e)}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('ElastiCache backup automation completed')
+              }
+      
+      Tags:
+        - Key: Name
+          Value: ElastiCache Backup Automation
+        - Key: Service
+          Value: Backup-Automation
+        - Key: Purpose
+          Value: redis-snapshots
+
+  # IAM Role for ElastiCache Backup Lambda
+  ElastiCacheBackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-ElastiCache-Backup-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ElastiCacheBackupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticache:CreateSnapshot
+                  - elasticache:DescribeReplicationGroups
+                  - elasticache:DescribeSnapshots
+                  - elasticache:DeleteSnapshot
+                  - elasticache:AddTagsToResource
+                  - elasticache:ListTagsForResource
+                Resource: "*"
+
+  # EventBridge Rule for Weekly ElastiCache Snapshots
+  WeeklyElastiCacheBackupRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: xyz-corp-weekly-elasticache-backup-rule
+      Description: Trigger weekly ElastiCache snapshots
+      ScheduleExpression: "cron(0 6 ? * SUN *)"  # 6:00 AM UTC every Sunday
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ElastiCacheBackupFunction.Arn
+          Id: ElastiCacheBackupTarget
+
+  # Permission for EventBridge to invoke ElastiCache backup Lambda
+  ElastiCacheBackupLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ElastiCacheBackupFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyElastiCacheBackupRule.Arn
+
+  # CloudWatch Log Groups for Backup Functions
+  RDSBackupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/xyz-corp-rds-snapshot-automation
+      RetentionInDays: 14
+
+  DynamoDBBackupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/xyz-corp-dynamodb-backup-automation
+      RetentionInDays: 14
+
+  ElastiCacheBackupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/xyz-corp-elasticache-backup-automation
+      RetentionInDays: 14
+
+  # SNS Topic for Backup Notifications
+  BackupNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: xyz-corp-backup-notifications
+      DisplayName: XYZ Corp Backup Notifications
+      
+  # CloudWatch Alarm for Failed Backups
+  BackupFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: xyz-corp-backup-failures
+      AlarmDescription: Alert when backup operations fail
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BackupNotificationTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RDSSnapshotFunction
+
+Outputs:
+  BackupAutomationStatus:
+    Description: Status of backup automation deployment
+    Value: "Backup automation configured for RDS, DynamoDB, and ElastiCache"
+
+  RDSSnapshotFunctionArn:
+    Description: ARN of the RDS snapshot automation function
+    Value: !GetAtt RDSSnapshotFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-rds-snapshot-function-arn"
+
+  BackupNotificationTopicArn:
+    Description: ARN of the backup notification SNS topic
+    Value: !Ref BackupNotificationTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-backup-notification-topic-arn"
+
+  BackupRetentionPolicy:
+    Description: Backup retention policy information
+    Value: !Sub "Automated backups retained for ${BackupRetentionDays} days with ${BackupWindow} backup window"

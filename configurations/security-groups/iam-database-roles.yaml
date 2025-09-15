@@ -1,0 +1,363 @@
+# IAM Roles and Policies for Database Services
+# XYZ Corporation Multi-Database Architecture - Identity & Access Management
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM roles and policies for database authentication and service access'
+
+Resources:
+  # IAM Role for Enhanced RDS Monitoring
+  RDSEnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-RDS-Enhanced-Monitoring-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        - Key: Name
+          Value: RDS Enhanced Monitoring Role
+        - Key: Service
+          Value: RDS
+        - Key: Purpose
+          Value: enhanced-monitoring
+
+  # IAM Role for Lambda functions accessing DynamoDB
+  DynamoDBLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-DynamoDB-Lambda-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-device-summary"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-device-summary/index/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics/stream/*"
+      Tags:
+        - Key: Name
+          Value: DynamoDB Lambda Execution Role
+        - Key: Service
+          Value: DynamoDB-Lambda
+        - Key: Purpose
+          Value: stream-processing
+
+  # IAM Role for Application Servers
+  ApplicationServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-Application-Server-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DatabaseAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB access for real-time data
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-device-summary"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-device-summary/index/*"
+              
+              # Secrets Manager access for database credentials
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:xyz-corp/rds/credentials/*"
+              
+              # CloudWatch for application metrics
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              
+              # Kinesis for real-time data streaming
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                Resource:
+                  - !Sub "arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/xyz-corp-device-data-stream"
+              
+              # Parameter Store for configuration
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/xyz-corp/*"
+      Tags:
+        - Key: Name
+          Value: Application Server Role
+        - Key: Service
+          Value: EC2-Application
+        - Key: Purpose
+          Value: database-and-service-access
+
+  # Instance Profile for Application Servers
+  ApplicationServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: XYZ-Corp-Application-Server-Profile
+      Roles:
+        - !Ref ApplicationServerRole
+
+  # IAM Role for Kinesis Data Streams
+  KinesisDataStreamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-Kinesis-Stream-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: kinesis.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: KinesisStreamPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/xyz-corp-realtime-analytics"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: Kinesis Data Stream Role
+        - Key: Service
+          Value: Kinesis
+        - Key: Purpose
+          Value: real-time-data-processing
+
+  # IAM Role for Backup and Maintenance
+  DatabaseMaintenanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: XYZ-Corp-Database-Maintenance-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:PrincipalTag/Department": "Database-Administration"
+      Policies:
+        - PolicyName: DatabaseMaintenancePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # RDS management permissions
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBSnapshots
+                  - rds:CreateDBSnapshot
+                  - rds:DeleteDBSnapshot
+                  - rds:ModifyDBInstance
+                  - rds:RebootDBInstance
+                  - rds:DescribeDBLogFiles
+                  - rds:DownloadDBLogFilePortion
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    "rds:db-tag/Environment": "production"
+              
+              # DynamoDB backup permissions
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateBackup
+                  - dynamodb:DeleteBackup
+                  - dynamodb:DescribeBackup
+                  - dynamodb:ListBackups
+                  - dynamodb:RestoreTableFromBackup
+                Resource: "*"
+              
+              # ElastiCache management
+              - Effect: Allow
+                Action:
+                  - elasticache:DescribeCacheClusters
+                  - elasticache:DescribeReplicationGroups
+                  - elasticache:CreateSnapshot
+                  - elasticache:DeleteSnapshot
+                  - elasticache:DescribeSnapshots
+                Resource: "*"
+              
+              # CloudWatch access for monitoring
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricAlarm
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: Database Maintenance Role
+        - Key: Service
+          Value: Database-Administration
+        - Key: Purpose
+          Value: maintenance-and-backup
+
+  # IAM Group for Database Administrators
+  DatabaseAdministratorsGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: XYZ-Corp-Database-Administrators
+      Policies:
+        - PolicyName: DatabaseAdminPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Allow assuming maintenance role
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !GetAtt DatabaseMaintenanceRole.Arn
+              
+              # Read-only access to all database services
+              - Effect: Allow
+                Action:
+                  - rds:Describe*
+                  - dynamodb:Describe*
+                  - dynamodb:List*
+                  - elasticache:Describe*
+                  - kinesis:Describe*
+                  - kinesis:List*
+                  - cloudwatch:Describe*
+                  - cloudwatch:Get*
+                  - cloudwatch:List*
+                Resource: "*"
+
+  # IAM Group for Application Developers
+  ApplicationDevelopersGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: XYZ-Corp-Application-Developers
+      Policies:
+        - PolicyName: DeveloperPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read-only access to database services for troubleshooting
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListTables
+                  - elasticache:DescribeCacheClusters
+                  - kinesis:DescribeStream
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: "*"
+              
+              # Parameter Store access for configuration
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/xyz-corp/dev/*"
+
+Outputs:
+  RDSEnhancedMonitoringRoleArn:
+    Description: ARN of the RDS Enhanced Monitoring Role
+    Value: !GetAtt RDSEnhancedMonitoringRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-rds-monitoring-role-arn"
+
+  DynamoDBLambdaRoleArn:
+    Description: ARN of the DynamoDB Lambda Role
+    Value: !GetAtt DynamoDBLambdaRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-dynamodb-lambda-role-arn"
+
+  ApplicationServerRoleArn:
+    Description: ARN of the Application Server Role
+    Value: !GetAtt ApplicationServerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-application-server-role-arn"
+
+  ApplicationServerInstanceProfileArn:
+    Description: ARN of the Application Server Instance Profile
+    Value: !GetAtt ApplicationServerInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-application-server-profile-arn"
+
+  DatabaseMaintenanceRoleArn:
+    Description: ARN of the Database Maintenance Role
+    Value: !GetAtt DatabaseMaintenanceRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-db-maintenance-role-arn"

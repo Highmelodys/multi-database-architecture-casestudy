@@ -1,0 +1,122 @@
+# CloudWatch Monitoring Configuration
+# XYZ Corporation Multi-Database Architecture
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch dashboards and alerts for database monitoring'
+
+Resources:
+  # Main Database Dashboard
+  DatabaseDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: XYZ-Corp-Database-Architecture
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "xyz-corp-primary-db" ],
+                  [ ".", "DatabaseConnections", ".", "." ],
+                  [ ".", "FreeableMemory", ".", "." ],
+                  [ ".", "ReadLatency", ".", "." ],
+                  [ ".", "WriteLatency", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "us-east-1",
+                "title": "RDS Primary Database Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "xyz-corp-realtime-analytics" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ],
+                  [ ".", "SuccessfulRequestLatency", ".", ".", "Operation", "Query" ],
+                  [ "...", "GetItem" ],
+                  [ "...", "PutItem" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "us-east-1",
+                "title": "DynamoDB Performance Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ElastiCache", "CPUUtilization", "CacheClusterId", "xyz-corp-redis-cluster" ],
+                  [ ".", "CurrConnections", ".", "." ],
+                  [ ".", "CacheHits", ".", "." ],
+                  [ ".", "CacheMisses", ".", "." ],
+                  [ ".", "NetworkBytesIn", ".", "." ],
+                  [ ".", "NetworkBytesOut", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "us-east-1",
+                "title": "ElastiCache Redis Metrics"
+              }
+            }
+          ]
+        }
+
+  # Performance Alerts
+  RDSHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: xyz-corp-rds-high-cpu
+      AlarmDescription: RDS CPU utilization is high
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: xyz-corp-primary-db
+      AlarmActions:
+        - !Ref DatabaseAlarmTopic
+
+  DynamoDBThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: xyz-corp-dynamodb-throttling
+      AlarmDescription: DynamoDB requests are being throttled
+      MetricName: ThrottledRequests
+      Namespace: AWS/DynamoDB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: TableName
+          Value: xyz-corp-realtime-analytics
+      AlarmActions:
+        - !Ref DatabaseAlarmTopic
+
+  # SNS Topic for Alerts
+  DatabaseAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: xyz-corp-database-alarms
+      DisplayName: XYZ Corp Database Alarms
